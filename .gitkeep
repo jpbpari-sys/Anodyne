@@ -1,0 +1,154 @@
+import random
+import threading
+import time
+from typing import List, Callable, Dict
+
+# List of top 100 most visited websites from Similarweb (December 2025)
+TOP_100_WEBSITES = [
+    "google.com", "youtube.com", "facebook.com", "instagram.com", "chatgpt.com",
+    "x.com", "reddit.com", "whatsapp.com", "wikipedia.org", "bing.com",
+    "tiktok.com", "amazon.com", "yahoo.co.jp", "yandex.ru", "yahoo.com",
+    "bet.br", "baidu.com", "netflix.com", "gemini.google.com", "linkedin.com",
+    "naver.com", "pornhub.com", "pinterest.com", "live.com", "dzen.ru",
+    "temu.com", "xhamster.com", "bilibili.com", "office.com", "microsoft.com",
+    "xvideos.com", "twitch.tv", "vk.com", "fandom.com", "news.yahoo.co.jp",
+    "canva.com", "weather.com", "mail.ru", "sharepoint.com", "t.me",
+    "samsung.com", "stripchat.com", "globo.com", "xnxx.com", "duckduckgo.com",
+    "ebay.com", "roblox.com", "aliexpress.com", "eporner.com", "walmart.com",
+    "nytimes.com", "discord.com", "docomo.ne.jp", "spotify.com", "xhamster44.desi",
+    "chaturbate.com", "espn.com", "ozon.ru", "amazon.co.jp", "paypal.com",
+    "apple.com", "booking.com", "imdb.com", "bbc.co.uk", "etsy.com",
+    "amazon.in", "github.com", "msn.com", "telegram.org", "zoom.us",
+    "usps.com", "amazon.de", "bbc.com", "ya.ru", "brave.com",
+    "rakuten.co.jp", "amazon.co.uk", "cnn.com", "ok.ru", "wildberries.ru",
+    "qq.com", "disneyplus.com", "rutube.ru", "music.youtube.com", "hbomax.com",
+    "quora.com", "office365.com", "shein.com", "namu.wiki", "indeed.com",
+    "adobe.com", "deepseek.com", "cricbuzz.com", "share.google", "daum.net",
+    "instructure.com", "douyin.com", "erome.com", "chat.deepseek.com", "faphouse.com"
+]
+
+class Ability:
+    """Base class for plug-and-play abilities."""
+    def __init__(self, name: str, action: Callable):
+        self.name = name
+        self.action = action
+
+    def execute(self, *args, **kwargs):
+        return self.action(*args, **kwargs)
+
+class Agent:
+    """Agent class with adaptive and plug-and-play abilities."""
+    def __init__(self, name: str, website: str):
+        self.name = name
+        self.website = website
+        self.abilities: Dict[str, Ability] = {}
+        self.feedback_history: List[str] = []
+        self.adapt_threshold = 3  # Adapt after 3 negative feedbacks
+
+    def add_ability(self, ability: Ability):
+        """Plug in a new ability."""
+        self.abilities[ability.name] = ability
+        print(f"{self.name} plugged in ability: {ability.name}")
+
+    def remove_ability(self, ability_name: str):
+        """Play out an ability."""
+        if ability_name in self.abilities:
+            del self.abilities[ability_name]
+            print(f"{self.name} played out ability: {ability_name}")
+
+    def use_ability(self, ability_name: str, *args, **kwargs):
+        """Use an ability if available."""
+        if ability_name in self.abilities:
+            result = self.abilities[ability_name].execute(*args, **kwargs)
+            print(f"{self.name} used {ability_name} on {self.website}: {result}")
+            return result
+        else:
+            print(f"{self.name} does not have ability: {ability_name}")
+            return None
+
+    def receive_feedback(self, feedback: str):
+        """Receive feedback and adapt if necessary."""
+        self.feedback_history.append(feedback)
+        if len([f for f in self.feedback_history[-self.adapt_threshold:] if "negative" in f]) >= self.adapt_threshold:
+            self.adapt()
+    
+    def adapt(self):
+        """Adaptogenic behavior: randomly add or remove an ability."""
+        if self.abilities:
+            ability_to_remove = random.choice(list(self.abilities.keys()))
+            self.remove_ability(ability_to_remove)
+        new_ability = random.choice([self.create_browse_ability(), self.create_analyze_ability()])
+        self.add_ability(new_ability)
+        print(f"{self.name} adapted by changing abilities.")
+
+    @staticmethod
+    def create_browse_ability():
+        def browse_action(website):
+            return f"Simulated browsing {website}"
+        return Ability("browse", browse_action)
+
+    @staticmethod
+    def create_analyze_ability():
+        def analyze_action(website):
+            return f"Simulated analysis of {website}"
+        return Ability("analyze", analyze_action)
+
+class Swarm:
+    """Swarm builder with checks and balances."""
+    def __init__(self, num_agents: int = 100):
+        self.agents: List[Agent] = []
+        self.create_agents(num_agents)
+        self.branches = {
+            "executive": self.agents[:33],   # Execute actions
+            "legislative": self.agents[33:66],  # Propose and check rules
+            "judicial": self.agents[66:]     # Judge and balance
+        }
+
+    def create_agents(self, num_agents: int):
+        for i in range(num_agents):
+            website = TOP_100_WEBSITES[i % len(TOP_100_WEBSITES)]  # Cycle if less than 100 sites
+            agent = Agent(f"Agent-{i+1}", website)
+            # Add initial abilities
+            agent.add_ability(Agent.create_browse_ability())
+            agent.add_ability(Agent.create_analyze_ability())
+            self.agents.append(agent)
+
+    def perform_task(self, task: str):
+        """Perform a swarm task with checks and balances."""
+        threads = []
+        for agent in self.agents:
+            t = threading.Thread(target=self.agent_task, args=(agent, task))
+            threads.append(t)
+            t.start()
+        
+        for t in threads:
+            t.join()
+
+    def agent_task(self, agent: Agent, task: str):
+        """Agent performs task with maneuver."""
+        if task == "browse":
+            result = agent.use_ability("browse", agent.website)
+        elif task == "analyze":
+            result = agent.use_ability("analyze", agent.website)
+        else:
+            result = "Unknown task"
+        
+        # Checks and balances: random check from other branches
+        checker = random.choice(self.branches["judicial"] if agent in self.branches["executive"] else
+                                self.branches["legislative"] if agent in self.branches["judicial"] else
+                                self.branches["executive"])
+        feedback = self.check_result(checker, result)
+        agent.receive_feedback(feedback)
+
+    def check_result(self, checker: Agent, result: str) -> str:
+        """Simulate checking the result."""
+        feedback = random.choice(["positive", "negative"])
+        print(f"{checker.name} checked result: {feedback}")
+        return feedback
+
+# Example usage
+if __name__ == "__main__":
+    swarm = Swarm(100)
+    swarm.perform_task("browse")
+    time.sleep(1)  # Simulate time passing
+    swarm.perform_task("analyze")
