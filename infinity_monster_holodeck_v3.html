@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infinity Monster Holodeck v3</title>
+<style>
+body { background:#050505; color:#0f0; font-family:'Courier New', monospace; text-align:center; margin:0; overflow-x:hidden; }
+h1 { font-size:1.2rem; letter-spacing:2px; text-shadow:0 0 10px #0f0; }
+canvas { width:100%; height:150px; background:#000; border-bottom:2px solid #0f0; }
+.controls { padding:20px; display:flex; flex-direction:column; align-items:center; }
+input, select, button { width:80%; max-width:400px; margin:8px; font-size:16px; background:#111; color:#0f0; border:1px solid #0f0; padding:10px; cursor:pointer; }
+button:active { background:#0f0; color:#000; }
+#xy { width:300px; height:300px; background:radial-gradient(circle,#111 0%,#000 100%); margin:20px auto; touch-action:none; border:2px solid #0f0; border-radius:15px; position:relative; box-shadow:0 0 20px rgba(0,255,0,0.2); }
+.status { font-size:10px; color:#0a0; }
+#swarmLibraryUI { width:90%; margin:10px auto; display:flex; flex-wrap:wrap; justify-content:center; }
+#swarmLibraryUI button { margin:4px; padding:6px; font-size:12px; background:#111; color:#0f0; border:1px solid #0f0; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<h1>👾 INFINITY MONSTER HOLODECK v3 // FM-GLITCH & HEALING Hz</h1>
+<canvas id="viz"></canvas>
+
+<div class="controls">
+<button onclick="startSystem()">INITIALIZE SYSTEM</button>
+<button onclick="startVoiceControl()" id="micBtn">🎤 ENABLE VOICE CONTROL</button>
+<label>Tempo (BPM)</label>
+<input type="range" min="40" max="180" value="110" id="tempo">
+<div id="xy"></div>
+
+<button onclick="toggleSessionRecording()">🔴 Start/Stop Session Recording</button>
+<button onclick="exportSwarmsAsStems()">💾 Export Swarm Stems</button>
+<button onclick="exportSessionMIDI()">💾 Export Session MIDI</button>
+
+<div id="swarmLibraryUI"></div>
+
+<p class="status" id="stat">SYSTEM IDLE</p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/midijs@0.3.0/dist/MIDI.min.js"></script>
+<script>
+/* ========================== AUDIO ENGINE ========================== */
+let ctx, master, analyser, delay, feedback, filter;
+let recorded=[], activeSwarms=[], recentRoots=[];
+let chaos=0.5, morph=0.5, rootCenter=60;
+let tempo=110, interval, stepCounter=0;
+let mic, voiceAnalyser;
+
+/* ========================== SYSTEM INITIALIZATION ========================== */
+function startSystem(){
+    if(ctx) return;
+    ctx = new (window.AudioContext||window.webkitAudioContext)();
+
+    master = ctx.createGain();
+    analyser = ctx.createAnalyser();
+    filter = ctx.createBiquadFilter();
+    delay = ctx.createDelay();
+    feedback = ctx.createGain();
+
+    filter.type="lowpass";
+    delay.delayTime.value=0.375;
+    feedback.gain.value=0.45;
+
+    filter.connect(master);
+    master.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(master);
+    master.connect(analyser);
+    analyser.connect(ctx.destination);
+    master.gain.value=0.6;
+
+    setupXY();
+    startSequencer();
+    renderOrchestration();
+    document.getElementById("stat").innerText="SYSTEM ACTIVE // HARMONIC DRIFT ON";
+}
+
+/* ========================== VOICE CONTROL ========================== */
+async function startVoiceControl(){
+    if(!ctx) await startSystem();
+    try{
+        const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+        mic = ctx.createMediaStreamSource(stream);
+        voiceAnalyser = ctx.createAnalyser();
+        mic.connect(voiceAnalyser);
+        document.getElementById("micBtn").innerText="🎤 VOICE TRACKING ACTIVE";
+
+        const dataArray = new Uint8Array(voiceAnalyser.frequencyBinCount);
+        function trackVoice(){
+            voiceAnalyser.getByteFrequencyData(dataArray);
+            let sum=0, peak=0, peakIdx=0;
+            for(let i=0;i<dataArray.length;i++){
+                sum+=dataArray[i];
+                if(dataArray[i]>peak){peak=dataArray[i]; peakIdx=i;}
+            }
+            let avg=sum/dataArray.length;
+            chaos=Math.min(avg/80,1.0);
+            morph=peakIdx/60;
+            requestAnimationFrame(trackVoice);
+        }
+        trackVoice();
+    }catch(e){alert("Mic access required for Voice Mode");}
+}
+
+/* ========================== SEQUENCER & GENERATIVE LOGIC ========================== */
+function generateNote(){
+    let scale=[0,2,3,5,7,8,10];
+    if(Math.random()<0.3*chaos+0.2*morph){
+        let shifts=[-5,-2,-1,1,2,5,7];
+        let candidate=rootCenter+shifts[Math.floor(Math.random()*shifts.length)];
+        if(!recentRoots.includes(candidate) && candidate>30 && candidate<90){
+            recentRoots.push(rootCenter);
+            if(recentRoots.length>3) recentRoots.shift();
+            rootCenter=candidate;
+        }
+    }
+    return rootCenter+scale[Math.floor(Math.random()*scale.length)];
+}
+
+function play(midi, vol=0.25){
+    let now=ctx.currentTime;
+    let carrier=ctx.createOscillator();
+    let carrierGain=ctx.createGain();
+    let modulator=ctx.createOscillator();
+    let modGain=ctx.createGain();
+
+    let freq=440*Math.pow(2,(midi-69)/12);
+    carrier.type="sawtooth"; carrier.frequency.value=freq;
+    modulator.frequency.value=freq*(chaos*4);
+    modGain.gain.value=morph*2000;
+    modulator.connect(modGain); modGain.connect(carrier.frequency);
+    carrier.connect(carrierGain); carrierGain.connect(filter);
+
+    carrierGain.gain.setValueAtTime(0,now);
+    carrierGain.gain.linearRampToValueAtTime(vol, now+0.05);
+    carrierGain.gain.exponentialRampToValueAtTime(0.001, now+0.5);
+
+    carrier.start(now); modulator.start(now);
+    carrier.stop(now+0.6); modulator.stop(now+0.6);
+}
+
+function startSequencer(){
+    interval=setInterval(()=>{
+        tempo=document.getElementById("tempo").value;
+        let note=generateNote();
+        recorded.push({note:note,time:Date.now()});
+        play(note,0.2);
+        if(Math.random()<0.1) rootCenter+=(Math.random()>0.5?1:-1);
+        filter.frequency.setTargetAtTime(300+(morph*5000), ctx.currentTime, 0.1);
+    },60000/tempo/2);
+}
+
+/* ========================== XY PAD ========================== */
+function setupXY(){
+    let pad=document.getElementById("xy");
+    const move=(e)=>{
+        let rect=pad.getBoundingClientRect();
+        let x=(e.touches?e.touches[0].clientX:e.clientX)-rect.left;
+        let y=(e.touches?e.touches[0].clientY:e.clientY)-rect.top;
+        chaos=Math.max(0,Math.min(1,x/rect.width));
+        morph=Math.max(0,Math.min(1,1-(y/rect.height)));
+    };
+    pad.addEventListener("touchmove",move);
+    pad.addEventListener("mousemove",e=>{if(e.buttons>0) move(e);});
+}
+
+/* ========================== VR / ORCHESTRATION ========================== */
+let hoverHelpEnabled=true, localUserID="local";
+function renderOrchestration(){
+    const c=document.getElementById("viz").getContext("2d");
+    c.clearRect(0,0,600,150);
+    activeSwarms.forEach((swarm,i)=>{
+        if(!swarm.alive) return;
+        const y=120-(swarm.chaos*60 + swarm.morph*40);
+        const color=swarm.owner?swarm.owner===localUserID?"#0f0":"#0ff":"#333";
+        c.fillStyle=color;
+        c.fillRect(i*10, y, 8, swarm.variations?.length||10);
+    });
+    updateHoverHelp({x:0.5,y:0.5}); // optional dummy update
+    requestAnimationFrame(renderOrchestration);
+}
+
+function updateHoverHelp(controller){
+    if(!hoverHelpEnabled || !activeSwarms.length) return;
+    const swarm=activeSwarms[Math.floor(controller.x*activeSwarms.length)];
+    const statDiv=document.getElementById("stat");
+    if(swarm) statDiv.innerText=`Swarm ${swarm.id?.slice(0,6)||"NA"} | Score: ${swarm.score?.toFixed(2)||0} | Chaos: ${swarm.chaos.toFixed(2)} | Morph: ${swarm.morph.toFixed(2)}`;
+}
+
+function toggleHoverHelp(){hoverHelpEnabled=!hoverHelpEnabled;}
+
+/* ========================== SWARM LIBRARY ========================== */
+const swarmLibrary=[];
+function saveSwarm(swarm){
+    const snapshot={
+        id:crypto.randomUUID(),
+        sequence:swarm.sequence?.map(ev=>({...ev.sample}))||[],
+        variations:swarm.variations?.map(s=>({...s}))||[],
+        owner:swarm.owner||null,
+        chaos:swarm.chaos,
+        morph:swarm.morph,
+        timestamp:Date.now()
+    };
+    swarmLibrary.push(snapshot); return snapshot.id;
+}
+function loadSwarm(snapshotID){
+    const snapshot=swarmLibrary.find(s=>s.id===snapshotID);
+    if(!snapshot) return null;
+    const newSwarm={
+        sequence:snapshot.sequence.map(ev=>({...ev})),
+        variations:snapshot.variations.map(s=>({...s})),
+        chaos:snapshot.chaos,
+        morph:snapshot.morph,
+        alive:true,
+        owner:snapshot.owner
+    };
+    activeSwarms.push(newSwarm);
+    return newSwarm;
+}
+function renderSwarmLibrary(){
+    const libDiv=document.getElementById("swarmLibraryUI");
+    libDiv.innerHTML="";
+    swarmLibrary.forEach(snap=>{
+        const btn=document.createElement("button");
+        btn.innerText=`Swarm ${snap.id.slice(0,6)}`;
+        btn.onclick=()=>loadSwarm(snap.id);
+        libDiv.appendChild(btn);
+    });
+}
+setInterval(renderSwarmLibrary,3000);
+
+/* ========================== SESSION RECORDING & EXPORT ========================== */
+let sessionRecorder, audioChunks=[], isRecording=false;
+function toggleSessionRecording(){
+    if(!isRecording){
+        const dest=ctx.createMediaStreamDestination();
+        master.connect(dest);
+        sessionRecorder=new MediaRecorder(dest.stream);
+        audioChunks=[];
+        sessionRecorder.ondataavailable=e=>audioChunks.push(e.data);
+        sessionRecorder.onstop=exportSessionAudio;
+        sessionRecorder.start(); isRecording=true;
+        console.log("Session Recording Started 🔴");
+    } else {
+        sessionRecorder.stop(); isRecording=false;
+        console.log("Session Recording Stopped ⏹️");
+    }
+}
+function exportSessionAudio(){
+    const blob=new Blob(audioChunks,{type:'audio/wav'});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download="InfinityMonster_FullSession.wav"; a.click();
+}
+
+function exportSwarmsAsStems(){
+    activeSwarms.forEach((swarm,i)=>{
+        const dest=ctx.createMediaStreamDestination();
+        swarm.outputGain?.connect(dest);
+        const stemRecorder=new MediaRecorder(dest.stream);
+        const chunks=[];
+        stemRecorder.ondataavailable=e=>chunks.push(e.data);
+        stemRecorder.onstop=()=>{
+            const blob=new Blob(chunks,{type:'audio/wav'});
+            const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+            a.download=`Swarm_${i+1}_Stem.wav`; a.click();
+        };
+        stemRecorder.start();
+        setTimeout(()=>stemRecorder.stop(),60000);
+    });
+}
+
+function exportSessionMIDI(){
+    const midiFile=new MIDI.File(); const track=new MIDI.Track();
+    midiFile.addTrack(track);
+    activeSwarms.forEach(swarm=>{
+        swarm.sequence?.forEach((evt,i)=>{
+            track.addNote(0, evt.sample?.midiNote||60,127,128,i*128);
+        });
+    });
+    const output=midiFile.toBytes();
+    const bytes=new Uint8Array(output.length);
+    for(let i=0;i<output.length;i++) bytes[i]=output.charCodeAt(i);
+    const blob=new Blob([bytes],{type:'audio/midi'});
+    const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+    a.download="InfinityMonster_FullSession.mid"; a.click();
+}
+
+/* ========================== AGENTIC HEALING FREQUENCY OPTIMIZATION ========================== */
+let targetFrequencies=[174,285,396,417,432,528,639,741];
+function setTargetFrequencies(frequencies){
+    targetFrequencies.length=0;
+    frequencies.forEach(f=>targetFrequencies.push(f));
+}
+
+function analyzeSwarmSpectrum(swarm){
+    const data=new Float32Array(analyser.fftSize);
+    analyser.getFloatFrequencyData(data);
+    swarm.frequencyScore=targetFrequencies.reduce((score,freq)=>{
+        const idx=Math.floor(freq/(ctx.sampleRate/2)*data.length);
+        return score+(data[idx]||0);
+    },0)/targetFrequencies.length;
+}
+
+function optimizeSwarmForHealing(swarm){
+    analyzeSwarmSpectrum(swarm);
+    swarm.morph=Math.min(1,swarm.morph+(swarm.frequencyScore/10));
+    swarm.chaos=Math.min(1,swarm.chaos*(1-swarm.frequencyScore/15));
+}
+
+</script>
+</body>
+</html>
